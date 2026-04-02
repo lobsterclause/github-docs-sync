@@ -1,16 +1,13 @@
 import * as logger from "../lib/logger.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { google } from "googleapis";
 import type { DocSyncFile } from "./types.js";
-
-type DriveClient = ReturnType<typeof google.drive>;
+import type { SyncContext, DriveClient } from "./context.js";
 
 /**
  * Generates an HTML table of contents from all synced file records.
  */
 export function generateTocHtml(files: DocSyncFile[], repoFullName?: string): string {
-  // Group by category (first meaningful path segment)
   const categories = new Map<string, DocSyncFile[]>();
 
   for (const file of files) {
@@ -20,7 +17,6 @@ export function generateTocHtml(files: DocSyncFile[], repoFullName?: string): st
     ]);
   }
 
-  // Sort categories and files within each
   const sortedCategories = [...categories.entries()].sort(([a], [b]) =>
     a.localeCompare(b),
   );
@@ -77,13 +73,18 @@ export function computeTocHash(files: DocSyncFile[]): string {
 
 /**
  * Creates or updates the "Documentation Index" Google Doc in the Drive root.
+ * Skips the write in dry-run mode.
  */
 export async function upsertTocDoc(
-  drive: DriveClient,
-  rootFolderId: string,
-  sharedDriveId: string,
+  ctx: Pick<SyncContext, "drive" | "sharedDriveId" | "rootFolderId" | "dryRun">,
   html: string,
 ): Promise<void> {
+  if (ctx.dryRun) {
+    logger.info("[dry-run] Would update Documentation Index");
+    return;
+  }
+
+  const { drive, rootFolderId, sharedDriveId } = ctx;
   const docName = "Documentation Index";
 
   const query = [

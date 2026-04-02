@@ -6,7 +6,13 @@ import {
   annotateBrokenLinks,
 } from "./linkResolver.js";
 import { scanForSensitiveContent, shouldSkipFile } from "./contentFilter.js";
+import {
+  extractImageReferences,
+  resolveImages,
+  replaceImageSources,
+} from "./assetSync.js";
 import type { DocSyncFile, CommitInfo, BrokenLink } from "./types.js";
+import type { SyncContext } from "./context.js";
 
 // Register the mermaid extension globally (idempotent — marked deduplicates)
 const mermaidExtension: MarkedExtension = {
@@ -32,6 +38,7 @@ export interface ProcessOptions {
   commitInfo?: CommitInfo;
   fileRecords?: Map<string, DocSyncFile>;
   allPaths?: Set<string>;
+  syncContext?: SyncContext;
 }
 
 /** Result of processing a markdown file. */
@@ -47,6 +54,7 @@ export interface ProcessResult {
  * Full markdown processing pipeline:
  * 1. Sensitive content scan
  * 2. Markdown → HTML (with mermaid placeholders)
+ * 2.5. Resolve image references (fetch from GitHub, upload to Drive)
  * 3. Resolve mermaid diagrams (with caching)
  * 4. Add metadata header
  * 5. Resolve internal links
@@ -86,6 +94,17 @@ export async function processMarkdown(
   const title =
     options.filePath.split("/").pop()?.replace(/\.md$/i, "") || "Document";
   let body = marked.parse(rawContent) as string;
+
+  // 2.5. Resolve image references
+  if (options.syncContext) {
+    const imageRefs = extractImageReferences(rawContent, options.filePath);
+    if (imageRefs.length > 0) {
+      const replacements = await resolveImages(imageRefs, options.syncContext);
+      if (replacements.size > 0) {
+        body = replaceImageSources(body, replacements);
+      }
+    }
+  }
 
   // 3. Resolve mermaid diagram placeholders
   const mermaidRegex =

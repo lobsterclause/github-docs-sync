@@ -2,8 +2,9 @@ import * as logger from "../lib/logger.js";
 import { google } from "googleapis";
 import { Readable } from "node:stream";
 import type { DriveUpsertResult } from "./types.js";
+import type { SyncContext, DriveClient } from "./context.js";
 
-type DriveClient = ReturnType<typeof google.drive>;
+export type { DriveClient } from "./context.js";
 
 /**
  * Creates a Google Auth + Drive client using Application Default Credentials.
@@ -17,13 +18,19 @@ export function createDriveClient(): DriveClient {
 
 /**
  * Gets or creates nested folder structure in Google Drive, mirroring the repo path.
+ * In dry-run mode, returns the rootFolderId without creating anything.
  */
 export async function ensureFolderPath(
-  drive: DriveClient,
+  ctx: Pick<SyncContext, "drive" | "sharedDriveId" | "dryRun">,
   parentId: string,
-  sharedDriveId: string,
   pathSegments: string[],
 ): Promise<string> {
+  if (ctx.dryRun) {
+    logger.info(`[dry-run] Would ensure folder path: ${pathSegments.join("/")}`);
+    return parentId;
+  }
+
+  const { drive, sharedDriveId } = ctx;
   let currentParent = parentId;
 
   for (const segment of pathSegments) {
@@ -64,11 +71,11 @@ export async function ensureFolderPath(
 
 /**
  * Uploads or updates a file as a Google Doc. Returns the Drive file ID and URL.
+ * In dry-run mode, returns a synthetic result without writing.
  */
 export async function upsertFile(
-  drive: DriveClient,
+  ctx: Pick<SyncContext, "drive" | "sharedDriveId" | "dryRun">,
   folderId: string,
-  sharedDriveId: string,
   fileName: string,
   html: string,
   opts?: {
@@ -77,6 +84,17 @@ export async function upsertFile(
   },
 ): Promise<DriveUpsertResult> {
   const docName = fileName.replace(/\.md$/i, "");
+
+  if (ctx.dryRun) {
+    logger.info(`[dry-run] Would upsert: ${docName}`);
+    return {
+      driveFileId: "dry-run",
+      driveFileUrl: `https://docs.google.com/document/d/dry-run`,
+      folderId,
+    };
+  }
+
+  const { drive, sharedDriveId } = ctx;
 
   const query = [
     `name = '${docName.replace(/'/g, "\\'")}'`,
@@ -139,14 +157,22 @@ export async function upsertFile(
 
 /**
  * Deletes a Google Doc by name in a given folder.
+ * In dry-run mode, returns null without deleting.
  */
 export async function deleteFile(
-  drive: DriveClient,
+  ctx: Pick<SyncContext, "drive" | "sharedDriveId" | "dryRun">,
   folderId: string,
-  sharedDriveId: string,
   fileName: string,
 ): Promise<string | null> {
   const docName = fileName.replace(/\.md$/i, "");
+
+  if (ctx.dryRun) {
+    logger.info(`[dry-run] Would delete: ${docName}`);
+    return "dry-run";
+  }
+
+  const { drive, sharedDriveId } = ctx;
+
   const query = [
     `name = '${docName.replace(/'/g, "\\'")}'`,
     `'${folderId}' in parents`,

@@ -1,0 +1,82 @@
+name: 'Sync Docs to Google Drive'
+description: 'Syncs GitHub markdown documentation to a Google Shared Drive'
+
+inputs:
+  firebase-project:
+    description: 'Firebase/GCP project ID'
+    required: true
+  service-account-key:
+    description: 'Base64-encoded GCP service account key JSON'
+    required: true
+  github-token:
+    description: 'GitHub token with read access to repo contents'
+    required: false
+    default: ${{ github.token }}
+  drive-shared-drive-id:
+    description: 'Google Shared Drive ID'
+    required: true
+  drive-folder-id:
+    description: 'Root folder ID within the Shared Drive'
+    required: true
+  branch:
+    description: 'Branch to sync (defaults to current branch)'
+    required: false
+    default: ''
+  dry-run:
+    description: 'Preview changes without writing to Drive'
+    required: false
+    default: 'false'
+  force:
+    description: 'Re-sync all files regardless of content hash'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Install CLI
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}/../../..
+        cd cli && npm ci && npm run build
+
+    - name: Authenticate to GCP
+      shell: bash
+      run: |
+        echo "${{ inputs.service-account-key }}" | base64 -d > /tmp/sa-key.json
+        echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+
+    - name: Run sync
+      shell: bash
+      env:
+        FIREBASE_PROJECT: ${{ inputs.firebase-project }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        DRIVE_SHARED_DRIVE_ID: ${{ inputs.drive-shared-drive-id }}
+        DRIVE_DOCS_FOLDER_ID: ${{ inputs.drive-folder-id }}
+      run: |
+        BRANCH="${{ inputs.branch }}"
+        if [ -z "$BRANCH" ]; then
+          BRANCH="${GITHUB_REF_NAME}"
+        fi
+
+        FLAGS=""
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          FLAGS="$FLAGS --dry-run"
+        fi
+        if [ "${{ inputs.force }}" = "true" ]; then
+          FLAGS="$FLAGS --force"
+        fi
+
+        node ${{ github.action_path }}/../../../cli/lib/index.js sync \
+          --repo "${{ github.repository }}" \
+          --branch "$BRANCH" \
+          $FLAGS
+
+    - name: Cleanup credentials
+      if: always()
+      shell: bash
+      run: rm -f /tmp/sa-key.json

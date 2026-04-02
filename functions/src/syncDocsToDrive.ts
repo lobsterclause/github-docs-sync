@@ -6,7 +6,10 @@ import {
   isDocFile,
   type GitHubPushEvent,
   type SyncResult,
+  type DryRunEntry,
+  type DryRunReport,
 } from "./docSync/types.js";
+import type { SyncContext } from "./docSync/context.js";
 import { fetchFileFromGitHub } from "./docSync/githubApi.js";
 import {
   createDriveClient,
@@ -29,6 +32,8 @@ import {
   computeTocHash,
   upsertTocDoc,
 } from "./docSync/tocGenerator.js";
+import { ensureSchemaVersion } from "./docSync/migration.js";
+import { getWatchedBranches } from "./docSync/configStore.js";
 
 const githubWebhookSecret = defineSecret("GITHUB_WEBHOOK_SECRET");
 const githubToken = defineSecret("GITHUB_TOKEN");
@@ -50,9 +55,15 @@ function verifyGitHubSignature(
   return timingSafeEqual(expected, actual);
 }
 
+/** Extract the branch name from a refs/heads/... ref string. */
+function branchFromRef(ref: string): string {
+  return ref.replace(/^refs\/heads\//, "");
+}
+
 /**
  * GitHub Webhook → Google Shared Drive sync for docs/ files.
  * Incrementally syncs changed docs with caching, link resolution, and content filtering.
+ * Supports multi-branch sync, dry-run mode, and automatic schema migration.
  */
 export const syncDocsToDrive = onRequest(
   {
@@ -99,11 +110,40 @@ export const syncDocsToDrive = onRequest(
       }
 
       const payload: GitHubPushEvent = req.body;
-      const defaultBranch = payload.repository.default_branch;
-      if (payload.ref !== `refs/heads/${defaultBranch}`) {
-        res.json({ message: `Ignored push to ${payload.ref}` });
+      const repoFullName = payload.repository.full_name;
+      const branch = branchFromRef(payload.ref);
+
+      // Multi-branch: check if this branch is watched
+      const watchedBranches = await getWatchedBranches(repoFullName);
+      if (!watchedBranches.includes(branch)) {
+        res.json({ message: `Branch ${branch} is not watched` });
         return;
       }
+
+      const dryRun = req.headers["x-dry-run"] === "true";
+
+      // Build SyncContext
+      const ctx: SyncContext = {
+        repoFullName,
+        branch,
+        sharedDriveId: driveSharedDriveId.value(),
+        rootFolderId: driveFolderId.value(),
+        token: githubToken.value(),
+        dryRun,
+        source: "webhook",
+        drive: createDriveClient(),
+      };
+
+      // Lazy schema migration
+      await ensureSchemaVersion(repoFullName, branch);
+
+      // Multi-branch: create branch subfolder as root for this branch
+      const branchRootFolderId = await ensureFolderPath(
+        ctx,
+        ctx.rootFolderId,
+        [branch],
+      );
+      const branchCtx: SyncContext = { ...ctx, rootFolderId: branchRootFolderId };
 
       // Collect doc file changes
       const added = new Set<string>();
@@ -129,17 +169,11 @@ export const syncDocsToDrive = onRequest(
       }
 
       logger.info(
-        `Syncing ${totalChanges} doc changes (${added.size} added, ${modified.size} modified, ${removed.size} removed)`,
+        `Syncing ${totalChanges} doc changes on ${branch} (${added.size} added, ${modified.size} modified, ${removed.size} removed)${dryRun ? " [DRY RUN]" : ""}`,
       );
 
-      const drive = createDriveClient();
-      const sharedDriveId = driveSharedDriveId.value();
-      const rootFolderId = driveFolderId.value();
-      const repoFullName = payload.repository.full_name;
-      const token = githubToken.value();
-
       // Pre-load file records for link resolution
-      const fileRecords = await getFileRecordsMap();
+      const fileRecords = await getFileRecordsMap(branchCtx);
       const allPaths = new Set(fileRecords.keys());
 
       // Build commit info from the push payload
@@ -159,6 +193,7 @@ export const syncDocsToDrive = onRequest(
         errors: 0,
         cached_diagrams: 0,
       };
+      const wouldSync: DryRunEntry[] = [];
       const brokenLinksAll: Array<{ source: string; target: string }> = [];
 
       // Process additions and modifications
@@ -166,9 +201,9 @@ export const syncDocsToDrive = onRequest(
         try {
           const content = await fetchFileFromGitHub(
             repoFullName,
-            defaultBranch,
+            branch,
             filePath,
-            token,
+            ctx.token,
           );
           if (!content) {
             results.errors++;
@@ -177,11 +212,13 @@ export const syncDocsToDrive = onRequest(
 
           // Incremental: skip if content unchanged
           const hash = contentHash(content);
-          const existing = await getFileRecord(filePath);
+          const existing = await getFileRecord(branchCtx, filePath);
           if (existing && existing.content_hash === hash) {
             results.skipped++;
             continue;
           }
+
+          const action = existing ? "update" : "create";
 
           // Process markdown through the full pipeline
           const processed = await processMarkdown(content.toString("utf-8"), {
@@ -190,6 +227,7 @@ export const syncDocsToDrive = onRequest(
             commitInfo,
             fileRecords,
             allPaths,
+            syncContext: branchCtx,
           });
 
           if (processed.skipped) {
@@ -208,6 +246,12 @@ export const syncDocsToDrive = onRequest(
             });
           }
 
+          if (dryRun) {
+            wouldSync.push({ path: filePath, action, reason: "content changed" });
+            results.synced++;
+            continue;
+          }
+
           // Upload to Drive
           const parts = filePath.split("/");
           const fileName = parts.pop()!;
@@ -217,15 +261,13 @@ export const syncDocsToDrive = onRequest(
             : "root";
 
           const targetFolderId = await ensureFolderPath(
-            drive,
-            rootFolderId,
-            sharedDriveId,
+            branchCtx,
+            branchCtx.rootFolderId,
             folderPath,
           );
           const driveResult = await upsertFile(
-            drive,
+            branchCtx,
             targetFolderId,
-            sharedDriveId,
             fileName,
             processed.html,
             {
@@ -242,7 +284,7 @@ export const syncDocsToDrive = onRequest(
           );
 
           // Track in Firestore
-          await upsertFileRecord({
+          await upsertFileRecord(branchCtx, {
             file_path: filePath,
             drive_file_id: driveResult.driveFileId,
             drive_file_url: driveResult.driveFileUrl,
@@ -251,6 +293,7 @@ export const syncDocsToDrive = onRequest(
             content_hash: hash,
             category,
             source_repo: repoFullName,
+            branch,
           });
 
           results.synced++;
@@ -265,17 +308,22 @@ export const syncDocsToDrive = onRequest(
       // Process deletions
       for (const filePath of removed) {
         try {
+          if (dryRun) {
+            wouldSync.push({ path: filePath, action: "delete", reason: "file removed" });
+            results.deleted++;
+            continue;
+          }
+
           const parts = filePath.split("/");
           const fileName = parts.pop()!;
           const folderPath = parts;
           const targetFolderId = await ensureFolderPath(
-            drive,
-            rootFolderId,
-            sharedDriveId,
+            branchCtx,
+            branchCtx.rootFolderId,
             folderPath,
           );
-          await deleteFile(drive, targetFolderId, sharedDriveId, fileName);
-          await deleteFileRecord(filePath);
+          await deleteFile(branchCtx, targetFolderId, fileName);
+          await deleteFileRecord(branchCtx, filePath);
           results.deleted++;
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -285,19 +333,19 @@ export const syncDocsToDrive = onRequest(
       }
 
       // Update sync state
-      await updateSyncState(payload.after, results.synced, repoFullName);
+      await updateSyncState(branchCtx, payload.after, results.synced);
 
       // Regenerate TOC if any files changed
       if (results.synced > 0 || results.deleted > 0) {
         try {
-          const allFiles = await getAllFileRecords();
+          const allFiles = await getAllFileRecords(branchCtx);
           const tocHash = computeTocHash(allFiles);
           const html = generateTocHtml(allFiles, repoFullName);
-          await upsertTocDoc(drive, rootFolderId, sharedDriveId, html);
+          await upsertTocDoc(branchCtx, html);
           await updateSyncState(
+            branchCtx,
             payload.after,
             results.synced,
-            repoFullName,
             tocHash,
           );
         } catch (err: unknown) {
@@ -312,8 +360,19 @@ export const syncDocsToDrive = onRequest(
         );
       }
 
-      logger.info(`Sync complete: ${JSON.stringify(results)}`);
-      res.json({ message: "Sync complete", results });
+      logger.info(`Sync complete: ${JSON.stringify(results)}${dryRun ? " [DRY RUN]" : ""}`);
+
+      if (dryRun) {
+        const report: DryRunReport = {
+          ...results,
+          wouldSync,
+          brokenLinks: [],
+          sensitiveFiles: [],
+        };
+        res.json({ message: "Dry run complete", report });
+      } else {
+        res.json({ message: "Sync complete", results });
+      }
     });
   },
 );

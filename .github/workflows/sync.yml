@@ -1,0 +1,61 @@
+name: Sync Docs to Drive
+
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: 'Preview changes without writing to Drive'
+        type: boolean
+        default: false
+      force:
+        description: 'Re-sync all files regardless of content hash'
+        type: boolean
+        default: false
+    secrets:
+      firebase-project:
+        required: true
+      firebase-sa-key:
+        required: true
+        description: 'Base64-encoded GCP service account key JSON'
+      drive-shared-drive-id:
+        required: true
+      drive-folder-id:
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and build CLI
+        run: cd cli && npm ci && npm run build
+
+      - name: Authenticate to GCP
+        run: |
+          echo "${{ secrets.firebase-sa-key }}" | base64 -d > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+
+      - name: Sync docs
+        env:
+          FIREBASE_PROJECT: ${{ secrets.firebase-project }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DRIVE_SHARED_DRIVE_ID: ${{ secrets.drive-shared-drive-id }}
+          DRIVE_DOCS_FOLDER_ID: ${{ secrets.drive-folder-id }}
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.dry-run }}" = "true" ]; then FLAGS="$FLAGS --dry-run"; fi
+          if [ "${{ inputs.force }}" = "true" ]; then FLAGS="$FLAGS --force"; fi
+
+          node cli/lib/index.js sync \
+            --repo "${{ github.repository }}" \
+            --branch "${{ github.ref_name }}" \
+            $FLAGS
+
+      - name: Cleanup credentials
+        if: always()
+        run: rm -f /tmp/sa-key.json

@@ -4,3 +4,4 @@ initializeApp();
 
 export { syncDocsToDrive } from "./syncDocsToDrive.js";
 export { syncDocsInitial } from "./syncDocsInitial.js";
+export { syncDocsPR } from "./syncDocsPR.js";

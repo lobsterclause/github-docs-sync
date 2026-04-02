@@ -11,5 +11,11 @@ service cloud.firestore {
     match /doc_sync_diagram_cache/{docId} {
       allow read, write: if false;
     }
+    match /doc_sync_config/{docId} {
+      allow read, write: if false;
+    }
+    match /doc_sync_assets/{docId} {
+      allow read, write: if false;
+    }
   }
 }

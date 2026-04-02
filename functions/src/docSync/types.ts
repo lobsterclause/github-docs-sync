@@ -27,13 +27,15 @@ export interface GitHubTreeEntry {
   size?: number;
 }
 
-/** Firestore: singleton at doc_sync_state/global */
+/** Firestore: per-branch state at doc_sync_state/{stateKey} */
 export interface DocSyncState {
   last_commit_sha: string;
   last_sync_at: Timestamp;
   total_files_synced: number;
   toc_hash: string;
   repo_full_name: string;
+  branch: string;
+  schema_version: number;
 }
 
 /** Firestore: one doc per synced file at doc_sync_files/{pathHash} */
@@ -48,6 +50,7 @@ export interface DocSyncFile {
   synced_at: Timestamp;
   created_at: Timestamp;
   source_repo: string;
+  branch: string;
 }
 
 /** Firestore: cached diagram at doc_sync_diagram_cache/{contentHash} */
@@ -93,6 +96,47 @@ export interface SensitiveMatch {
   pattern: string;
   match: string;
   line: number;
+}
+
+/** An entry in a dry-run report describing what would happen. */
+export interface DryRunEntry {
+  path: string;
+  action: "create" | "update" | "delete";
+  reason: string;
+}
+
+/** Extended sync result for dry-run mode. */
+export interface DryRunReport extends SyncResult {
+  wouldSync: DryRunEntry[];
+  brokenLinks: BrokenLink[];
+  sensitiveFiles: Array<{ path: string; matches: SensitiveMatch[] }>;
+}
+
+/** Firestore: asset cache at doc_sync_assets/{contentHash} */
+export interface AssetCacheEntry {
+  content_hash: string;
+  drive_file_id: string;
+  drive_url: string;
+  original_paths: string[];
+  size_bytes: number;
+  cached_at: Timestamp;
+}
+
+/** GitHub pull request webhook payload (subset). */
+export interface GitHubPullRequestEvent {
+  action: "opened" | "synchronize" | "closed" | "reopened";
+  number: number;
+  pull_request: {
+    head: { ref: string; sha: string };
+    base: { ref: string };
+    title: string;
+    user: { login: string };
+    changed_files: number;
+  };
+  repository: {
+    full_name: string;
+    default_branch: string;
+  };
 }
 
 // Constants

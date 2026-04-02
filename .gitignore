@@ -1,7 +1,19 @@
 node_modules/
 functions/lib/
+cli/lib/
 *.log
 .firebase/
+
+# TypeScript build artifacts
+*.tsbuildinfo
+*.d.ts
+*.d.ts.map
+*.js.map
+# Keep actual JS source files (mermaid renderer)
+!docker/**/*.mjs
+# But ignore compiled JS in TypeScript source dirs
+functions/src/**/*.js
+cli/src/**/*.js
 
 # Environment files
 .env
