@@ -20,12 +20,13 @@ error() { echo -e "${RED}[x]${RESET} $1"; }
 step()  { echo -e "\n${BOLD}── $1 ──${RESET}"; }
 prompt() {
   local var_name=$1 prompt_text=$2 default=${3:-}
+  local value
   if [[ -n "$default" ]]; then
     read -rp "$(echo -e "${BOLD}$prompt_text${RESET} ${DIM}[$default]${RESET}: ")" value
-    eval "$var_name=\"${value:-$default}\""
+    printf -v "$var_name" '%s' "${value:-$default}"
   else
     read -rp "$(echo -e "${BOLD}$prompt_text${RESET}: ")" value
-    eval "$var_name=\"$value\""
+    printf -v "$var_name" '%s' "$value"
   fi
 }
 confirm() {
@@ -34,9 +35,10 @@ confirm() {
 }
 secret_prompt() {
   local var_name=$1 prompt_text=$2
+  local value
   read -srp "$(echo -e "${BOLD}$prompt_text${RESET}: ")" value
   echo
-  eval "$var_name=\"$value\""
+  printf -v "$var_name" '%s' "$value"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -267,20 +269,18 @@ step "Deploying Cloud Functions"
 info "Installing dependencies..."
 (cd functions && npm install --silent)
 
-info "Deploying functions with MERMAID_RENDERER_URL=$MERMAID_URL..."
-firebase deploy --only functions \
-  --force \
-  -- --set-env-vars="MERMAID_RENDERER_URL=$MERMAID_URL" 2>/dev/null \
-  || firebase deploy --only functions --force
+info "Setting MERMAID_RENDERER_URL for Cloud Functions..."
+firebase functions:config:set mermaid.renderer_url="$MERMAID_URL" 2>/dev/null || true
+
+info "Deploying functions..."
+MERMAID_RENDERER_URL="$MERMAID_URL" firebase deploy --only functions --force
 
 info "Deploying Firestore rules..."
 firebase deploy --only firestore:rules
 
-# Get the function URL
-FUNCTION_URL=$(firebase functions:list 2>/dev/null | grep syncDocsToDrive | awk '{print $NF}' || true)
-if [[ -z "$FUNCTION_URL" ]]; then
-  FUNCTION_URL="https://$REGION-$PROJECT_ID.cloudfunctions.net/syncDocsToDrive"
-fi
+# Construct function URLs
+WEBHOOK_FUNCTION_URL="https://$REGION-$PROJECT_ID.cloudfunctions.net/syncDocsToDrive"
+INITIAL_SYNC_URL="https://$REGION-$PROJECT_ID.cloudfunctions.net/syncDocsInitial"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GitHub webhook setup
@@ -293,7 +293,7 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     gh api "repos/$GITHUB_REPO/hooks" \
       --method POST \
       -f "name=web" \
-      -f "config[url]=$FUNCTION_URL" \
+      -f "config[url]=$WEBHOOK_FUNCTION_URL" \
       -f "config[content_type]=json" \
       -f "config[secret]=$WEBHOOK_SECRET" \
       -F "config[insecure_ssl]=0" \
@@ -308,7 +308,7 @@ else
 fi
 
 echo
-echo -e "  ${BOLD}Webhook URL:${RESET}    $FUNCTION_URL"
+echo -e "  ${BOLD}Webhook URL:${RESET}    $WEBHOOK_FUNCTION_URL"
 echo -e "  ${BOLD}Content type:${RESET}   application/json"
 echo -e "  ${BOLD}Secret:${RESET}         $WEBHOOK_SECRET"
 echo -e "  ${BOLD}Events:${RESET}         push"
@@ -322,7 +322,7 @@ step "Initial sync"
 if confirm "Run initial sync now to import all existing docs?"; then
   info "Triggering initial sync for $GITHUB_REPO..."
   TOKEN=$(gcloud auth print-identity-token)
-  curl -s -X POST "$FUNCTION_URL" \
+  curl -s -X POST "$INITIAL_SYNC_URL" \
     -H "Authorization: Bearer $TOKEN" \
     -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
     -H "Content-Type: application/json" \
@@ -331,7 +331,7 @@ if confirm "Run initial sync now to import all existing docs?"; then
   info "Initial sync triggered"
 else
   info "Skipped — run manually later:"
-  echo -e "  ${DIM}curl -X POST \"$FUNCTION_URL\" \\${RESET}"
+  echo -e "  ${DIM}curl -X POST \"$INITIAL_SYNC_URL\" \\${RESET}"
   echo -e "  ${DIM}  -H \"Authorization: Bearer \$(gcloud auth print-identity-token)\" \\${RESET}"
   echo -e "  ${DIM}  -H \"X-Webhook-Secret: <secret>\" \\${RESET}"
   echo -e "  ${DIM}  -H \"Content-Type: application/json\" \\${RESET}"
@@ -346,7 +346,8 @@ step "Setup complete"
 
 echo
 info "Mermaid renderer: $MERMAID_URL"
-info "Webhook endpoint: $FUNCTION_URL"
+info "Webhook endpoint: $WEBHOOK_FUNCTION_URL"
+info "Initial sync URL: $INITIAL_SYNC_URL"
 info "Firebase project: $PROJECT_ID"
 info "Syncing repo:     $GITHUB_REPO"
 echo
