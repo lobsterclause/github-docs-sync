@@ -114,7 +114,8 @@ export const syncDocsToDrive = onRequest(
       const branch = branchFromRef(payload.ref);
 
       // Multi-branch: check if this branch is watched
-      const watchedBranches = await getWatchedBranches(repoFullName);
+      const defaultBranch = payload.repository.default_branch;
+      const watchedBranches = await getWatchedBranches(repoFullName, defaultBranch);
       if (!watchedBranches.includes(branch)) {
         res.json({ message: `Branch ${branch} is not watched` });
         return;

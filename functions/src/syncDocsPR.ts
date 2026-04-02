@@ -19,6 +19,7 @@ import {
   contentHash,
   upsertFileRecord,
   getAllFileRecords,
+  getFileRecordsMap,
   deleteFileRecord,
 } from "./docSync/firestoreTracking.js";
 
@@ -181,6 +182,16 @@ export const syncDocsPR = onRequest(
       const tree = await fetchRepoTree(repoFullName, headBranch, token);
       logger.info(`Found ${tree.length} doc files in PR #${prNumber} (${headBranch})`);
 
+      // Pre-load file records for link resolution (from main branch)
+      const fileRecords = await getFileRecordsMap({
+        repoFullName,
+        branch: repository.default_branch,
+      });
+      const allPaths = new Set([
+        ...fileRecords.keys(),
+        ...tree.map((t) => t.path),
+      ]);
+
       const results: SyncResult = {
         synced: 0,
         skipped: 0,
@@ -208,6 +219,9 @@ export const syncDocsPR = onRequest(
               author: pr.user.login,
               date: new Date().toISOString(),
             },
+            fileRecords,
+            allPaths,
+            syncContext: previewCtx,
           });
 
           if (processed.skipped) {
@@ -249,7 +263,7 @@ export const syncDocsPR = onRequest(
           });
           results.synced++;
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
           logger.error(`Error syncing PR preview ${filePath}: ${msg}`);
           results.errors++;
         }

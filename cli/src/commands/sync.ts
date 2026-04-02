@@ -189,7 +189,7 @@ export async function runSync(options: SyncOptions): Promise<void> {
             category,
             source_repo: repo,
             branch,
-          } as any);
+          });
 
           console.log(chalk.green(`  Synced: ${filePath}`));
           results.synced++;

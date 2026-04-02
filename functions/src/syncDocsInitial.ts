@@ -276,11 +276,11 @@ export const syncDocsInitial = onRequest(
                   category,
                   source_repo: repoFullName,
                   branch,
-                } as any);
+                });
 
                 results.synced++;
               } catch (err: unknown) {
-                const msg = err instanceof Error ? err.message : String(err);
+                const msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
                 console.error(`[docSync] Error syncing ${filePath}: ${msg}`);
                 results.errors++;
               }

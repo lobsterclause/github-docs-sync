@@ -24,7 +24,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
   console.log(chalk.bold("Sync State:"));
   console.log(`  Last commit:    ${state.last_commit_sha}`);
-  console.log(`  Last sync:      ${state.last_sync_at ? new Date((state.last_sync_at as any)._seconds * 1000).toISOString() : "unknown"}`);
+  console.log(`  Last sync:      ${state.last_sync_at ? state.last_sync_at.toDate().toISOString() : "unknown"}`);
   console.log(`  Files synced:   ${state.total_files_synced}`);
   console.log(`  Branch:         ${state.branch || "main"}`);
   console.log(`  Schema version: ${state.schema_version || 0}`);

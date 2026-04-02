@@ -47,8 +47,8 @@ export interface DocSyncFile {
   last_commit_sha: string;
   content_hash: string;
   category: string;
-  synced_at: Timestamp;
-  created_at: Timestamp;
+  synced_at?: Timestamp;
+  created_at?: Timestamp;
   source_repo: string;
   branch: string;
 }

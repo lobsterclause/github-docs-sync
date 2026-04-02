@@ -87,8 +87,12 @@ async function uploadAssetToDrive(
 ): Promise<{ driveFileId: string; driveUrl: string }> {
   const { drive, sharedDriveId } = ctx;
 
-  // Check if file already exists
-  const docName = path.basename(fileName);
+  // Use a path-derived unique name to prevent collisions across directories
+  // e.g. docs/a/logo.png and docs/b/logo.png get distinct Drive names
+  const pathHash = createHash("sha256").update(fileName).digest("hex").slice(0, 8);
+  const ext = path.extname(fileName);
+  const base = path.basename(fileName, ext);
+  const docName = `${base}-${pathHash}${ext}`;
   const query = [
     `name = '${docName.replace(/'/g, "\\'")}'`,
     `'${assetFolderId}' in parents`,
@@ -104,7 +108,6 @@ async function uploadAssetToDrive(
     driveId: sharedDriveId,
   });
 
-  const ext = path.extname(fileName).toLowerCase();
   const mimeTypes: Record<string, string> = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -113,7 +116,7 @@ async function uploadAssetToDrive(
     ".svg": "image/svg+xml",
     ".webp": "image/webp",
   };
-  const mimeType = mimeTypes[ext] || "application/octet-stream";
+  const mimeType = mimeTypes[ext.toLowerCase()] || "application/octet-stream";
 
   const media = { mimeType, body: Readable.from(buffer) };
   let fileId: string;

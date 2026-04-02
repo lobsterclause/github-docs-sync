@@ -10,7 +10,7 @@ async function getMermaidAuthToken(): Promise<string> {
     `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${MERMAID_RENDERER_BASE}`,
     { headers: { "Metadata-Flavor": "Google" } },
   );
-  return tokenRes.text();
+  return await tokenRes.text();
 }
 
 /**

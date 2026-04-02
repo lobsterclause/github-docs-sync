@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getFirestore } from "firebase-admin/firestore";
 
 /** Per-repo sync configuration stored in Firestore. */
@@ -14,22 +15,30 @@ function getDb() {
   return db;
 }
 
+/** Collision-safe document ID from a repo full name (e.g. "owner/repo"). */
+function repoConfigDocId(repoFullName: string): string {
+  return createHash("sha256").update(repoFullName).digest("hex").slice(0, 40);
+}
+
 /**
  * Returns the list of watched branches for a repo.
- * Defaults to ["main"] if no config exists (backward compatible).
+ * Defaults to [defaultBranch] if no config exists (backward compatible).
+ * Falls back to ["main"] if defaultBranch is not provided.
  */
 export async function getWatchedBranches(
   repoFullName: string,
+  defaultBranch?: string,
 ): Promise<string[]> {
   const doc = await getDb()
     .collection("doc_sync_config")
-    .doc(repoFullName.replace(/\//g, "_"))
+    .doc(repoConfigDocId(repoFullName))
     .get();
 
-  if (!doc.exists) return ["main"];
+  const fallback = [defaultBranch || "main"];
+  if (!doc.exists) return fallback;
 
   const data = doc.data() as RepoSyncConfig;
-  return data.watched_branches?.length > 0 ? data.watched_branches : ["main"];
+  return data.watched_branches?.length > 0 ? data.watched_branches : fallback;
 }
 
 /**
@@ -41,7 +50,7 @@ export async function setWatchedBranches(
 ): Promise<void> {
   await getDb()
     .collection("doc_sync_config")
-    .doc(repoFullName.replace(/\//g, "_"))
+    .doc(repoConfigDocId(repoFullName))
     .set({ watched_branches: branches }, { merge: true });
 }
 
@@ -53,7 +62,7 @@ export async function getRepoConfig(
 ): Promise<RepoSyncConfig | null> {
   const doc = await getDb()
     .collection("doc_sync_config")
-    .doc(repoFullName.replace(/\//g, "_"))
+    .doc(repoConfigDocId(repoFullName))
     .get();
 
   return doc.exists ? (doc.data() as RepoSyncConfig) : null;
@@ -68,6 +77,6 @@ export async function updateRepoConfig(
 ): Promise<void> {
   await getDb()
     .collection("doc_sync_config")
-    .doc(repoFullName.replace(/\//g, "_"))
+    .doc(repoConfigDocId(repoFullName))
     .set(config, { merge: true });
 }

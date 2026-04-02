@@ -39,7 +39,7 @@ export function generateTocHtml(files: DocSyncFile[], repoFullName?: string): st
         file.file_path.split("/").pop()?.replace(/\.md$/i, "") ||
         file.file_path;
       const syncDate = file.synced_at
-        ? new Date((file.synced_at as any)._seconds * 1000).toLocaleDateString(
+        ? file.synced_at.toDate().toLocaleDateString(
             "en-US",
             { month: "short", day: "numeric", year: "numeric" },
           )
