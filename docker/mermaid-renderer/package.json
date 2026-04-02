@@ -1,0 +1,10 @@
+{
+  "name": "mermaid-renderer",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "mermaid": "^11.4.1",
+    "puppeteer": "^24.0.0"
+  }
+}

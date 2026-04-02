@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Doc sync collections — server-only (Cloud Functions use Admin SDK)
+    match /doc_sync_state/{docId} {
+      allow read, write: if false;
+    }
+    match /doc_sync_files/{docId} {
+      allow read, write: if false;
+    }
+    match /doc_sync_diagram_cache/{docId} {
+      allow read, write: if false;
+    }
+  }
+}
