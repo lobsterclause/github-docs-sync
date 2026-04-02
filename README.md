@@ -62,30 +62,58 @@ syncDocsInitial (HTTP trigger)
 | `doc_sync_files` | Maps repo file paths to Google Drive file IDs |
 | `doc_sync_diagram_cache` | Caches rendered Mermaid diagram hashes |
 
-## Setup
-
-### Prerequisites
-
-- Firebase project with Firestore enabled
-- Google Shared Drive with the Firebase service account added as **Content Manager**
-- GitHub fine-grained PAT with **Contents: Read-only** on the target repo
-
-### 1. Clone and install
+## Quick Start
 
 ```bash
 git clone https://github.com/yourusername/github-docs-sync.git
-cd github-docs-sync/functions && npm install
+cd github-docs-sync
+./setup.sh
 ```
 
-### 2. Configure Firebase
+The interactive setup script handles everything: enabling GCP APIs, creating Firestore, setting secrets, deploying the Mermaid renderer to Cloud Run, deploying Cloud Functions, and optionally creating the GitHub webhook and running the initial sync.
+
+### Prerequisites
+
+- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`)
+- [Firebase CLI](https://firebase.google.com/docs/cli) (`firebase`)
+- [Node.js](https://nodejs.org/) 22+
+- A GCP project with billing enabled
+- A Google Shared Drive
+- A GitHub fine-grained PAT with **Contents: Read-only** on the target repo
+- *(Optional)* [GitHub CLI](https://cli.github.com/) (`gh`) for automatic webhook creation
+
+### Manual Setup
+
+If you prefer to set things up step by step:
+
+<details>
+<summary>Click to expand manual steps</summary>
+
+#### 1. Configure Firebase
 
 ```bash
-# Set your Firebase project
 firebase use your-project-id
-# Or edit .firebaserc directly
 ```
 
-### 3. Set secrets
+#### 2. Enable GCP APIs
+
+```bash
+gcloud services enable \
+  cloudfunctions.googleapis.com \
+  firestore.googleapis.com \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  secretmanager.googleapis.com \
+  drive.googleapis.com
+```
+
+#### 3. Create Firestore database
+
+```bash
+gcloud firestore databases create --location=us-central1
+```
+
+#### 4. Set secrets
 
 ```bash
 firebase functions:secrets:set GITHUB_WEBHOOK_SECRET
@@ -94,12 +122,11 @@ firebase functions:secrets:set DRIVE_SHARED_DRIVE_ID
 firebase functions:secrets:set DRIVE_DOCS_FOLDER_ID
 ```
 
-### 4. Deploy the Mermaid renderer
+#### 5. Deploy the Mermaid renderer
 
 ```bash
-cd docker/mermaid-renderer
 gcloud run deploy mermaid-renderer \
-  --source . \
+  --source docker/mermaid-renderer \
   --region us-central1 \
   --memory 2Gi \
   --cpu 1 \
@@ -108,26 +135,28 @@ gcloud run deploy mermaid-renderer \
   --no-allow-unauthenticated
 ```
 
-After deploying, set `MERMAID_RENDERER_URL` as an environment variable for your Cloud Functions (the base URL of the deployed service, e.g. `https://mermaid-renderer-XXXX.us-central1.run.app`).
+Set `MERMAID_RENDERER_URL` as an environment variable for your Cloud Functions (the base URL of the deployed service).
 
-### 5. Deploy functions and rules
+#### 6. Deploy functions and rules
 
 ```bash
+cd functions && npm install
 firebase deploy --only functions
 firebase deploy --only firestore:rules
 ```
 
-### 6. Configure GitHub Webhook
+#### 7. Add service account to Shared Drive
 
-Point a webhook at your function URL:
+Add your project's default service account as a **Content Manager** on the Google Shared Drive.
+
+#### 8. Configure GitHub Webhook
+
 - **URL:** `https://<region>-<project>.cloudfunctions.net/syncDocsToDrive`
 - **Content type:** `application/json`
 - **Secret:** Same value as `GITHUB_WEBHOOK_SECRET`
 - **Events:** Just `push`
 
-### 7. Initial sync
-
-Trigger a full sync of all existing docs:
+#### 9. Initial sync
 
 ```bash
 curl -X POST "https://<function-url>/syncDocsInitial" \
@@ -136,6 +165,8 @@ curl -X POST "https://<function-url>/syncDocsInitial" \
   -H "Content-Type: application/json" \
   -d '{"repo": "owner/repo-name"}'
 ```
+
+</details>
 
 ## Customization
 
