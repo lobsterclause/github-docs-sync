@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/github-docs-sync-banner.png" alt="GitHub Docs Sync — Markdown in. Living docs out." width="100%" />
+</p>
+
 # github-docs-sync
 
 Sync GitHub repo markdown docs to a Google Shared Drive as formatted Google Docs with Mermaid diagram rendering.
